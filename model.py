@@ -18,7 +18,7 @@ class Encoder(nn.Module):
         self.lstm = nn.LSTM(input_size=hidden_size,
                          hidden_size=hidden_size,
                          num_layers=1,
-                         batch_first=True,
+                         batch_first = True,
                          dropout=0.0)
 
     def forward(self, x):
@@ -26,47 +26,29 @@ class Encoder(nn.Module):
         x = self.lstm(x)
         return x
 
+
 class Decoder(nn.Module):
     def __init__(self, dataset, device, hidden_size = 64):
         super(Decoder, self).__init__()
         self.dataset = dataset
         self.device = device
         self.out_embeddings = nn.Embedding(len(dataset.out_to_ix), hidden_size)
-        self.lstm = nn.LSTM(input_size=hidden_size,
-                         hidden_size=hidden_size,
-                         num_layers=1,
-                         batch_first=True,
-                         dropout=0.0)
+        self.decoder_lstm = nn.LSTM(input_size=hidden_size,
+                             hidden_size=hidden_size,
+                             num_layers=1,
+                             batch_first=True,
+                             dropout=0.0)
         self.linear = nn.Linear(hidden_size, len(dataset.out_to_ix))
 
-    def forward(self, last_token, current_hidden=None):
-        x = self.out_embeddings(torch.tensor([[last_token]], device=self.device))
-        if not current_hidden:
-            _, (h, c) = self.lstm(x)
-        else:
-            _, (h, c) = self.lstm(x, current_hidden)
-        return (h, c), self.linear(h)
+    def forward(self, x, hidden):
+        hidden_state, cell_state = self.decode(x, hidden)
+        out_scores = self.linear(hidden_state)
+        return (hidden_state, cell_state), out_scores
 
-def test(encoder, decoder, plain_word):
-    dataset = encoder.dataset
-    word_tensor, _ = dataset.proces(list(plain_word), [])
-    _, (h, _) = encoder(word)
-    c = h
-    out = dataset.out_to_ix[SOS]
-    EOS_IX = dataset.out_to_ix[EOS]
-    while out != EOS_IX:
-        (h, c), p = decoder(out, (h, c))
-        p = p.view(-1)
-        _, ix = torch.topk(p, 1)
-        ix = ix.item()
-        print(dataset.ix_to_out[ix])
-        out = ix
-
-        # p = p.view(1, -1)
-        # target = torch.tensor([out[0, i + 1]], device=device)
-        # if target[0] == dataset.out_to_ix[EOS]:
-            # break
-
+    def decode(self, x, hidden):
+        x = self.out_embeddings(x)
+        _, (hidden_state, cell_state) = self.decoder_lstm(x, hidden)
+        return (hidden_state, cell_state)
 
 random.seed(1)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -76,36 +58,45 @@ encoder = Encoder(dataset, device, hidden_size)
 decoder = Decoder(dataset, device, hidden_size)
 encoder.to(device)
 decoder.to(device)
-loss = nn.CrossEntropyLoss()
+criterion = nn.CrossEntropyLoss()
 params = list(encoder.parameters()) + list(decoder.parameters())
-optim = torch.optim.Adam(params, lr = 5e-3)
-for epoch in range(3):
+optim = torch.optim.Adam(params, lr = 1e-3)
+
+log_every = 500
+for epoch in range(10):
     print("epoch", epoch)
-    avg_loss = 0
-    pred = 0
-    for word, out in tqdm(dataset.train):
-        optim.zero_grad()
-        word, out = dataset.proces(word, out)
+    batch_losses = []
+    for i, (word, target) in enumerate(dataset.train_epoch()):
+        if i % log_every == 0:
+            print(''.join(dataset.unwrap_word(word[3])), ' '.join(dataset.unwrap_out(target[3])))
+
+
         _, (h, _) = encoder(word)
-        c = h
-        l = 0
-        for i, gold in enumerate(out[0,:]):
-            (h, c), p = decoder(gold.item(), (h, c))
+        current_hidden = (h, h)
+        x = target[:, 0:1]
+        word_loss = 0
 
-            p = p.view(1, -1)
-            target = torch.tensor([out[0, i + 1]], device=device)
-            l += loss(p, target)
-            pred += 1
-            if target[0] == dataset.out_to_ix[EOS]:
-                break
+        samples = []
+        for x_ix in range(len(target[0]) - 1):
+            #decode a timestep
+            x_target = target[:, x_ix+1]
+            (current_hidden), scores = decoder(x, current_hidden)
+            scores = scores.squeeze(dim=0)
+            word_loss += criterion(scores, x_target)
 
-        avg_loss += l.item()
-        l.backward()
+            #sample
+            _, ix = torch.topk(scores, 1)
+            x = ix
+            samples.append(ix[3].item())
+
+        if i % log_every == 0:
+            print(' '.join(dataset.unwrap_out(torch.tensor(samples))))
+
+        batch_losses.append(word_loss.item() / word.shape[1])
+        word_loss.backward()
         optim.step()
-
-        # if pred > 5000:
-            # print(avg_loss / pred)
-            # pred = 0
-            # avg_loss = 0
-    test(encoder, decoder, 'hello')
+        optim.zero_grad()
+        if i % log_every == 0:
+            print("Loss: {:4.4f}".format(sum(batch_losses) / len(batch_losses)))
+            batch_losses = []
 
