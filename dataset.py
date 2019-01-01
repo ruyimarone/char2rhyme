@@ -36,10 +36,11 @@ class Dataset:
                 self.out_vocab.update(arpabets)
                 instances.append((word, arpabets))
 
+        instances = [(word, arpabets) for (word, arpabets) in instances if len(word) < 16]
         random.shuffle(instances)
 
-        train_cutoff = int(0.8 * len(instances))
-        dev_cutoff = int(0.1 * len(instances))
+        train_cutoff = int(0.9 * len(instances))
+        dev_cutoff = int(0.05 * len(instances))
         self.train = instances[:train_cutoff]
         self.dev = instances[train_cutoff:train_cutoff + dev_cutoff]
         self.test = instances[train_cutoff + dev_cutoff:]
@@ -52,23 +53,17 @@ class Dataset:
 
         #chunk into batches of at most size 50
         self.batches = []
-        size = 50
+        size = 96
         for lengths in self.batch_info:
             all_instances = list(self.batch_info[lengths])
-            batches = [all_instances[i * size : (i+1) * size] for i in range(len(all_instances) // size)]
+            batches = [all_instances[i : i + size] for i in range(0, len(all_instances), size)]
             self.batches += [[self.train[i] for i in batch] for batch in batches]
 
+
+        print(sum(len(b) for b in self.batches), len(self.train))
+        print(sum([c for t, c in (Counter(len(b) for b in self.batches)).items() if t != size]))
         #don't want a length bias while training
         random.shuffle(self.batches)
-
-    def get_batch(self, word, out):
-        pass
-        # word = [SOS] + word + [EOS]
-        # out = [SOS] + out + [EOS]
-        # word_tensor = torch.tensor([[self.char_to_ix[c] for c in word]], device=self.device)
-        # out_tensor = torch.tensor([[self.out_to_ix[o] for o in out]], device=self.device)
-        # return word_tensor, out_tensor
-        # return self.batches[self._batch_ix]
 
     def wrap_batch(self, text_batch):
         words = []
@@ -78,9 +73,20 @@ class Dataset:
             outs.append([self.out_to_ix[o] for o in [SOS] + out + [EOS]])
         return torch.tensor(words), torch.tensor(outs)
 
+    def wrap_word(self, word):
+        return torch.tensor([[self.char_to_ix[c] for c in [SOS] + list(word) + [EOS]]])
+
     def train_epoch(self):
         for batch in self.batches:
             yield self.wrap_batch(batch)
+
+    def dev_set(self):
+        for instance in self.dev:
+            yield self.wrap_batch([instance])
+
+    def test_set(self):
+        for instance in self.test:
+            yield self.wrap_batch([instance])
 
     def unwrap_word(self, char_tensor):
         return [self.ix_to_char[i.item()] for i in char_tensor]
