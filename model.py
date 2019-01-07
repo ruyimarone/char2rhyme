@@ -27,7 +27,7 @@ class Encoder(nn.Module):
     def forward(self, x):
         x = self.char_embeddings(x)
         outs, (h, c) = self.lstm(x)
-        #collapse each direction
+        #collapse forward and backwards dimensions to a single hidden state
         final_hidden = torch.cat((outs[:, -1, :self.hidden_size], outs[:, 0, self.hidden_size:]), dim=1)
         return outs, final_hidden.unsqueeze(dim=0)
 
@@ -92,8 +92,7 @@ def evaluate(encoder, decoder, instances, verbose=False):
             batch_loss += criterion(scores, x_target)
 
             #sample
-            _, ix = torch.topk(scores, 1)
-            x = ix
+            _, x = torch.topk(scores, 1)
 
         # epoch_ppl
         losses.append(batch_loss.item() / target.shape[1])
@@ -137,8 +136,7 @@ for epoch in range(10):
             batch_loss += criterion(scores, x_target)
 
             #sample
-            _, ix = torch.topk(scores, 1)
-            x = ix
+            _, x = torch.topk(scores, 1)
 
         # epoch_ppl
         batch_losses.append(batch_loss.item() / target.shape[1])
@@ -152,6 +150,4 @@ for epoch in range(10):
             batch_losses = []
     with torch.no_grad():
         evaluate(encoder, decoder, dataset.dev_set())
-            # for d in forward(encoder, decoder, dev):
-                # print(d)
 
