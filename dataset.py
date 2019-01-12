@@ -8,11 +8,11 @@ SOS = '<SOS>'
 EOS = '<EOS>'
 
 class Dataset:
-    def __init__(self, device, max_len = 12):
+    def __init__(self, device, max_length = 16, batch_size = 50, debug=False):
         self.char_vocab = Counter([SOS, EOS])
         self.out_vocab = Counter([SOS, EOS])
 
-        self.preprocess_arpabet('cmudict-0.7b')
+        self.preprocess_arpabet('cmudict-0.7b', max_length, batch_size, debug)
 
         self.char_to_ix = {c : i for i, c in enumerate(sorted(self.char_vocab))}
         self.ix_to_char = {i : c for c, i in self.char_to_ix.items()}
@@ -22,12 +22,19 @@ class Dataset:
 
         self.device = device
 
-    def preprocess_arpabet(self, path):
+        print("Input Characters: {}".format(len(self.char_to_ix)))
+        print("Output Characters {}".format(len(self.out_to_ix)))
+        print("Training Instances: {}".format(len(self.train)))
+        print("Average Batch Size: {:4.4f}".format(sum(len(b) for b in self.batches) / len(self.batches)))
+
+    def preprocess_arpabet(self, path, max_length, batch_size, debug):
         instances = []
         with codecs.open(path, 'r', encoding='latin-1') as f:
             for i, line in enumerate(f):
                 if i < 126:
                     continue
+                if debug and i == 10000:
+                    break
                 parts = line.strip().split(' ')
                 word = list(parts[0].lower())
                 arpabets = parts[2:]
@@ -36,7 +43,7 @@ class Dataset:
                 self.out_vocab.update(arpabets)
                 instances.append((word, arpabets))
 
-        instances = [(word, arpabets) for (word, arpabets) in instances if len(word) < 16]
+        instances = [(word, arpabets) for (word, arpabets) in instances if len(word) < max_length]
         random.shuffle(instances)
 
         train_cutoff = int(0.9 * len(instances))
@@ -53,15 +60,12 @@ class Dataset:
 
         #chunk into batches of at most size 50
         self.batches = []
-        size = 96
         for lengths in self.batch_info:
             all_instances = list(self.batch_info[lengths])
-            batches = [all_instances[i : i + size] for i in range(0, len(all_instances), size)]
+            batches = [all_instances[i : i + batch_size] for i in range(0, len(all_instances), batch_size)]
             self.batches += [[self.train[i] for i in batch] for batch in batches]
 
-
-        print(sum(len(b) for b in self.batches), len(self.train))
-        print(sum([c for t, c in (Counter(len(b) for b in self.batches)).items() if t != size]))
+        # print(Counter(len(b) for b in self.batches).most_common(5))
         #don't want a length bias while training
         random.shuffle(self.batches)
 

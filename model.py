@@ -8,6 +8,7 @@ from dataset import Dataset, EOS, SOS
 
 import random
 import math
+import argparse
 
 
 class Encoder(nn.Module):
@@ -33,7 +34,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, dataset, device, hidden_size = 64):
+    def __init__(self, dataset, device, hidden_size):
         super(Decoder, self).__init__()
         self.dataset = dataset
         self.device = device
@@ -43,6 +44,7 @@ class Decoder(nn.Module):
                              num_layers=1,
                              batch_first=True,
                              dropout=0.0)
+
         self.linear = nn.Linear(hidden_size, len(dataset.out_to_ix))
 
     def forward(self, x, hidden):
@@ -76,9 +78,10 @@ def forward(encoder, decoder, instances):
     return results
 
 def evaluate(encoder, decoder, instances, verbose=False):
-    criterion = nn.CrossEntropyLoss()
-    losses = []
-    for i, (word, target) in enumerate(instances):
+    criterion = nn.CrossEntropyLoss(size_average=False)
+    loss = 0
+    num_chars = 0
+    for i, (word, target) in tqdm(enumerate(instances), total=len(dataset.dev)):
         _, h = encoder(word)
         current_hidden = (h, h)
         x = target[:, 0:1]
@@ -94,60 +97,84 @@ def evaluate(encoder, decoder, instances, verbose=False):
             #sample
             _, x = torch.topk(scores, 1)
 
-        # epoch_ppl
-        losses.append(batch_loss.item() / target.shape[1])
-
-    avg_loss = sum(losses) / len(losses)
-    print("Eval PPL: {:4.4f}".format(math.exp(avg_loss)))
+        num_chars += target.shape[0] * (target.shape[1] - 1)
+        loss += batch_loss.item()
 
 
+    loss = loss / num_chars
+    print("Eval PPL: {:4.4f}".format(math.exp(loss)))
 
-random.seed(1)
-torch.manual_seed(1)
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-dataset = Dataset(device)
-hidden_size = 64
-encoder = Encoder(dataset, device, hidden_size, char_size = 64)
-decoder = Decoder(dataset, device, hidden_size)
-encoder.to(device)
-decoder.to(device)
-criterion = nn.CrossEntropyLoss()
-params = list(encoder.parameters()) + list(decoder.parameters())
-optim = torch.optim.Adam(params, lr = 1e-3)
 
-log_every = 100
 
-dev = [dataset.wrap_word('marc'), dataset.wrap_word('morc')]
 
-for epoch in range(10):
-    print("epoch", epoch)
-    batch_losses = []
-    for i, (word, target) in enumerate(dataset.train_epoch()):
-        _, h = encoder(word)
-        current_hidden = (h, h)
-        x = target[:, 0:1]
-        batch_loss = 0
+def train(encoder, decoder, dataset, epochs=10, log_every=500, my_dev=[]):
+    criterion = nn.CrossEntropyLoss(size_average=False)
+    params = list(encoder.parameters()) + list(decoder.parameters())
+    optim = torch.optim.Adam(params, lr = 5e-3)
 
-        for x_ix in range(len(target[0]) - 1):
-            #decode a timestep
-            x_target = target[:, x_ix+1]
-            (current_hidden), scores = decoder(x, current_hidden)
-            scores = scores.squeeze(dim=0)
-            batch_loss += criterion(scores, x_target)
+    for epoch in range(10):
+        print("epoch", epoch)
+        batch_losses = []
+        epoch_loss = 0
+        instances = 0
+        for i, (word, target) in tqdm(enumerate(dataset.train_epoch()), total=len(dataset.batches)):
+            _, h = encoder(word)
+            current_hidden = (h, h)
+            x = target[:, 0:1]
+            batch_loss = 0
+            for x_ix in range(len(target[0]) - 1):
+                #decode a timestep
+                x_target = target[:, x_ix+1]
+                (current_hidden), scores = decoder(x, current_hidden)
+                scores = scores.squeeze(dim=0)
+                batch_loss += criterion(scores, x_target)
 
-            #sample
-            _, x = torch.topk(scores, 1)
+                #sample
+                _, x = torch.topk(scores, 1)
 
-        # epoch_ppl
-        batch_losses.append(batch_loss.item() / target.shape[1])
-        batch_loss.backward()
-        optim.step()
-        optim.zero_grad()
-        if (i + 1) % log_every == 0:
-            print(len(batch_losses))
-            avg_loss = sum(batch_losses) / len(batch_losses)
-            print("PPL: {:4.4f}".format(math.exp(avg_loss)))
-            batch_losses = []
-    with torch.no_grad():
-        evaluate(encoder, decoder, dataset.dev_set())
+            #TODO does the loss scaling make sense (also in eval function)
+            num_preds = target.shape[0] * (target.shape[1] - 1)
+            instances += num_preds
+            epoch_loss += batch_loss.item()
+            batch_loss /= num_preds
+
+            batch_loss.backward()
+            optim.step()
+            optim.zero_grad()
+
+
+        epoch_loss = epoch_loss / instances
+        print("Epoch {} train PPL: {:4.4f}".format(epoch, math.exp(epoch_loss)))
+
+        with torch.no_grad():
+            evaluate(encoder, decoder, dataset.dev_set())
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    parser.add_argument("--character-size", dest="character_size", default=64, type=int, help="size of the character embedding")
+    parser.add_argument("--encoder", dest="encoder_size", default=64, type=int, help="size of the encoder hidden state")
+    parser.add_argument("--epochs", dest="epochs", default=10, type=int, help="number of epochs to train for")
+    parser.add_argument("--batch-size", dest="batch_size", default=50, type=int, help="max size of a full batch (batches can be smaller)")
+    parser.add_argument("--debug", dest="debug", action="store_true", help="truncate the dataset for faster training")
+
+    args = parser.parse_args()
+
+    random.seed(1)
+    torch.manual_seed(1)
+
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    dataset = Dataset(device, batch_size = args.batch_size, debug=args.debug)
+
+    encoder = Encoder(dataset, device, args.encoder_size, char_size = args.character_size)
+    decoder = Decoder(dataset, device, args.encoder_size)
+
+    encoder.to(device)
+    decoder.to(device)
+
+    try:
+        train(encoder, decoder, dataset, args.epochs, log_every=len(dataset.batches) // 10)
+    except KeyboardInterrupt:
+        print("Interruped")
 
