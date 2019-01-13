@@ -84,10 +84,10 @@ class Dataset:
         for word, out in text_batch:
             words.append([self.char_to_ix[c] for c in [SOS] + word + [EOS]])
             outs.append([self.out_to_ix[o] for o in [SOS] + out + [EOS]])
-        return torch.tensor(words), torch.tensor(outs)
+        return torch.tensor(words, device=self.device), torch.tensor(outs, device=self.device)
 
     def wrap_word(self, word):
-        return torch.tensor([[self.char_to_ix[c] for c in [SOS] + list(word) + [EOS]]])
+        return torch.tensor([[self.char_to_ix[c] for c in [SOS] + list(word) + [EOS]]], device=self.device)
 
     def train_epoch(self):
         for batch in self.batches:

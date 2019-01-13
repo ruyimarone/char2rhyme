@@ -64,7 +64,7 @@ def forward(encoder, decoder, instances):
         current_hidden = (h, h)
         out_char = None
         chars = []
-        x = torch.tensor([[encoder.dataset.out_to_ix[SOS]]])
+        x = torch.tensor([[encoder.dataset.out_to_ix[SOS]]], device=encoder.device)
         while (out_char != EOS) and len(chars) < 20:
             #decode a timestep
             (current_hidden), scores = decoder(x, current_hidden)
@@ -184,8 +184,7 @@ if __name__ == '__main__':
     decoder.to(device)
 
     if args.run:
-        # encoder.load_state_dict(torch.load(args.model + '.model'))
-        # decoder.load_state_dict(torch.load(argsm.model + '.model'))
+        #TODO unhardcode and implement a joint encoder-decoder model class
         encoder.load_state_dict(torch.load('encoder3.model'))
         decoder.load_state_dict(torch.load('decoder3.model'))
         run(encoder, decoder, dataset)
