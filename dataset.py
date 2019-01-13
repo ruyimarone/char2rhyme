@@ -22,6 +22,15 @@ class Dataset:
 
         self.device = device
 
+        #load ipa chart
+        self.arpabet_to_ipa = {}
+        self.ipa_to_arpabet = {}
+        with open('ipa.txt', 'r') as f:
+            for line in f:
+                arp, ipa = line.split()
+                self.arpabet_to_ipa[arp] = ipa
+                self.ipa_to_arpabet[ipa] = arp
+
         print("Input Characters: {}".format(len(self.char_to_ix)))
         print("Output Characters {}".format(len(self.out_to_ix)))
         print("Training Instances: {}".format(len(self.train)))
@@ -97,3 +106,12 @@ class Dataset:
 
     def unwrap_out(self, out_tensor):
         return [self.ix_to_out[i.item()] for i in out_tensor]
+
+    def translate_arpabet(self, word):
+        chars = []
+        for char in word.split():
+            chars.append(self.arpabet_to_ipa[char])
+        return ''.join(chars)
+
+if __name__ == '__main__':
+    d = Dataset('')

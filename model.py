@@ -112,7 +112,7 @@ def train(encoder, decoder, dataset, epochs=10, log_every=500, my_dev=[]):
     params = list(encoder.parameters()) + list(decoder.parameters())
     optim = torch.optim.Adam(params, lr = 5e-3)
 
-    for epoch in range(10):
+    for epoch in range(epochs):
         print("epoch", epoch)
         batch_losses = []
         epoch_loss = 0
@@ -149,6 +149,13 @@ def train(encoder, decoder, dataset, epochs=10, log_every=500, my_dev=[]):
         with torch.no_grad():
             evaluate(encoder, decoder, dataset.dev_set())
 
+def run(encoder, decoder, dataset):
+    while True:
+        word = input('> ')
+        output = forward(encoder, decoder, [dataset.wrap_word(word)])[0]
+        ipa = dataset.translate_arpabet(output[:-5])
+        print(ipa)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -158,8 +165,11 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", dest="epochs", default=10, type=int, help="number of epochs to train for")
     parser.add_argument("--batch-size", dest="batch_size", default=50, type=int, help="max size of a full batch (batches can be smaller)")
     parser.add_argument("--debug", dest="debug", action="store_true", help="truncate the dataset for faster training")
+    parser.add_argument("--model", dest="model", help="name of model to load or run")
+    parser.add_argument("--run", dest="run", action="store_true", help="echos word back in IPA")
 
     args = parser.parse_args()
+
 
     random.seed(1)
     torch.manual_seed(1)
@@ -173,8 +183,15 @@ if __name__ == '__main__':
     encoder.to(device)
     decoder.to(device)
 
-    try:
-        train(encoder, decoder, dataset, args.epochs, log_every=len(dataset.batches) // 10)
-    except KeyboardInterrupt:
-        print("Interruped")
+    if args.run:
+        # encoder.load_state_dict(torch.load(args.model + '.model'))
+        # decoder.load_state_dict(torch.load(argsm.model + '.model'))
+        encoder.load_state_dict(torch.load('encoder3.model'))
+        decoder.load_state_dict(torch.load('decoder3.model'))
+        run(encoder, decoder, dataset)
+    else:
+        try:
+            train(encoder, decoder, dataset, args.epochs, log_every=len(dataset.batches) // 10)
+        except KeyboardInterrupt:
+            print("Interruped")
 
