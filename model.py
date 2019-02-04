@@ -78,18 +78,22 @@ class Seq2Seq(nn.Module):
         return new_hidden, scores, x
 
 
-    def train_step(self, word, target, criterion):
+    def train_step(self, word, target, criterion, return_scores=False):
         _, h = self.encoder(word)
         current_hidden = (h, h)
         x = target[:, 0:1]
         batch_loss = 0
+        sequence_scores = []
         for x_ix in range(len(target[0]) - 1):
             #decode a timestep
             current_hidden, scores, x = self._decoder_step(x, current_hidden)
 
             x_target = target[:, x_ix+1]
             batch_loss += criterion(scores, x_target)
+            if return_scores:
+                sequence_scores.append(scores)
 
-        return batch_loss
-
-
+        if return_scores:
+            return batch_loss, sequence_scores
+        else:
+            return batch_loss

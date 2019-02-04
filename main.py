@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 from tqdm import tqdm
 
+import numpy as np
+
 from dataset import Dataset, EOS, SOS
 from model import Seq2Seq
 
@@ -12,57 +14,20 @@ import math
 import argparse
 
 
+def evaluate(model, eval_instances, num_eval_instances=None):
+    criterion = nn.CrossEntropyLoss(size_average=False)
+    instances = 0
+    total_loss = 0
+    for i, (word, target) in tqdm(enumerate(eval_instances), total=num_eval_instances):
+        loss = model.train_step(word, target, criterion)
 
-def forward(encoder, decoder, instances):
-    results = []
-    for word in instances:
-        _, h = encoder(word)
-        current_hidden = (h, h)
-        out_char = None
-        chars = []
-        x = torch.tensor([[encoder.dataset.out_to_ix[SOS]]], device=encoder.device)
-        while (out_char != EOS) and len(chars) < 20:
-            #decode a timestep
-            (current_hidden), scores = decoder(x, current_hidden)
-            scores = scores.squeeze(dim=0)
-            #sample
-            _, ix = torch.topk(scores, 1)
-            x = ix
-            out_char = encoder.dataset.ix_to_out[ix[0][0].item()]
-            chars.append(out_char)
-        results.append(' '.join(chars))
-    return results
+        num_preds, loss = rescale_loss(loss, target)
+        instances += num_preds
+        total_loss += (loss.item() * num_preds)
 
-# def evaluate(encoder, decoder, instances, verbose=False):
-    # criterion = nn.CrossEntropyLoss(size_average=False)
-    # loss = 0
-    # num_chars = 0
-    # for i, (word, target) in tqdm(enumerate(instances), total=len(dataset.dev)):
-        # _, h = encoder(word)
-        # current_hidden = (h, h)
-        # x = target[:, 0:1]
-        # batch_loss = 0
-
-        # for x_ix in range(len(target[0]) - 1):
-            # #decode a timestep
-            # x_target = target[:, x_ix+1]
-            # (current_hidden), scores = decoder(x, current_hidden)
-            # scores = scores.squeeze(dim=0)
-            # batch_loss += criterion(scores, x_target)
-
-            # #sample
-            # _, x = torch.topk(scores, 1)
-
-        # num_chars += target.shape[0] * (target.shape[1] - 1)
-        # loss += batch_loss.item()
-
-
-    # loss = loss / num_chars
-    # print("Eval PPL: {:4.4f}".format(math.exp(loss)))
-
-
-
-# def evaluate(model, dataset
+    avg_loss = total_loss / instances
+    print("Eval PPL: {:4.4f}".format(math.exp(avg_loss)))
+    return math.exp(avg_loss)
 
 def rescale_loss(loss, target):
     #TODO does the loss scaling make sense
@@ -71,11 +36,11 @@ def rescale_loss(loss, target):
     return num_preds, loss
 
 
-def train(model, dataset, epochs=10, log_every=500, my_dev=[]):
+def train(model, dataset, epochs=10, log_every=500, my_dev=[], save_name=None):
     criterion = nn.CrossEntropyLoss(size_average=False)
     params = model.parameters()
     optim = torch.optim.Adam(params, lr=5e-3)
-
+    old_best_dev_ppl = np.inf
     for epoch in range(epochs):
         epoch_loss = 0
         instances = 0
@@ -92,13 +57,20 @@ def train(model, dataset, epochs=10, log_every=500, my_dev=[]):
 
         epoch_loss = epoch_loss / instances
         print("Epoch {} train PPL: {:4.4f}".format(epoch, math.exp(epoch_loss)))
+        with torch.no_grad():
+            dev_ppl = evaluate(model, dataset.dev_set(), len(dataset.dev))
+            if save_name != None and dev_ppl < old_best_dev_ppl:
+                print("New Best")
+                torch.save(model.state_dict(), save_name)
+            old_best_dev_ppl = dev_ppl
 
-def run(encoder, decoder, dataset):
-    while True:
-        word = input('> ')
-        output = forward(encoder, decoder, [dataset.wrap_word(word)])[0]
-        ipa = dataset.translate_arpabet(output[:-5])
-        print(ipa)
+
+# def run(encoder, decoder, dataset):
+    # while True:
+        # word = input('> ')
+        # output = forward(encoder, decoder, [dataset.wrap_word(word)])[0]
+        # ipa = dataset.translate_arpabet(output[:-5])
+        # print(ipa)
 
 
 if __name__ == '__main__':
@@ -109,7 +81,7 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", dest="epochs", default=10, type=int, help="number of epochs to train for")
     parser.add_argument("--batch-size", dest="batch_size", default=50, type=int, help="max size of a full batch (batches can be smaller)")
     parser.add_argument("--debug", dest="debug", action="store_true", help="truncate the dataset for faster training")
-    parser.add_argument("--model", dest="model", help="name of model to load or run")
+    parser.add_argument("--save", dest="save", help="path to save best models by dev ppl")
     parser.add_argument("--run", dest="run", action="store_true", help="echos word back in IPA")
 
     args = parser.parse_args()
@@ -123,14 +95,14 @@ if __name__ == '__main__':
 
     model = Seq2Seq(dataset, device, args.encoder_size, args.character_size)
 
-    if args.run:
-        #TODO unhardcode and implement a joint encoder-decoder model class
-        encoder.load_state_dict(torch.load('encoder3.model'))
-        decoder.load_state_dict(torch.load('decoder3.model'))
-        run(encoder, decoder, dataset)
-    else:
-        try:
-            train(model, dataset, args.epochs, log_every=len(dataset.batches) // 10)
-        except KeyboardInterrupt:
-            print("Interruped")
+    # if args.run:
+        # #TODO unhardcode and implement a joint encoder-decoder model class
+        # encoder.load_state_dict(torch.load('encoder3.model'))
+        # decoder.load_state_dict(torch.load('decoder3.model'))
+        # run(encoder, decoder, dataset)
+    # else:
+    try:
+        train(model, dataset, args.epochs, log_every=len(dataset.batches) // 10, save_name=args.save)
+    except KeyboardInterrupt:
+        print("Interruped")
 
