@@ -83,6 +83,7 @@ if __name__ == '__main__':
     parser.add_argument("--debug", dest="debug", action="store_true", help="truncate the dataset for faster training")
     parser.add_argument("--save", dest="save", help="path to save best models by dev ppl")
     parser.add_argument("--run", dest="run", action="store_true", help="echos word back in IPA")
+    parser.add_argument("--type", dest="type", default="base", help="Decoder type, one of: base, attn")
 
     args = parser.parse_args()
 
@@ -93,7 +94,7 @@ if __name__ == '__main__':
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     dataset = Dataset(device, batch_size = args.batch_size, debug=args.debug)
 
-    model = Seq2Seq(dataset, device, args.encoder_size, args.character_size)
+    model = Seq2Seq(dataset, device, args.encoder_size, args.character_size, args.type)
 
     # if args.run:
         # #TODO unhardcode and implement a joint encoder-decoder model class
