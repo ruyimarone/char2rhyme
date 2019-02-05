@@ -46,6 +46,10 @@ class Dataset:
                     break
                 parts = line.strip().split(' ')
                 word = list(parts[0].lower())
+                if word[-1] == ')':
+                    # this word has several entries marked word, word(1), word(2)
+                    # as a hack, just discard the number portion
+                    word = word[:-3]
                 arpabets = parts[2:]
                 arpabets = [arp[:-1] if arp[-1].isdigit() else arp for arp in arpabets]
                 self.char_vocab.update(word)
