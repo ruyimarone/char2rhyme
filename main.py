@@ -29,6 +29,12 @@ def evaluate(model, eval_instances, num_eval_instances=None):
     print("Eval PPL: {:4.4f}".format(math.exp(avg_loss)))
     return math.exp(avg_loss)
 
+def free_run(model, instances):
+    outputs = []
+    for word in instances:
+        outputs.append(model.free_run(word, return_attentions=True))
+    return outputs
+
 def rescale_loss(loss, target):
     #TODO does the loss scaling make sense
     num_preds = target.shape[0] * (target.shape[1] - 1)
@@ -65,12 +71,15 @@ def train(model, dataset, epochs=10, log_every=500, my_dev=[], save_name=None):
             old_best_dev_ppl = dev_ppl
 
 
-# def run(encoder, decoder, dataset):
-    # while True:
-        # word = input('> ')
-        # output = forward(encoder, decoder, [dataset.wrap_word(word)])[0]
-        # ipa = dataset.translate_arpabet(output[:-5])
-        # print(ipa)
+def run(model):
+    while True:
+        word = input('> ')
+        output, attentions = free_run(model, [model.dataset.wrap_word(word)])[0]
+        arpa_string = ' '.join([model.dataset.ix_to_out[o] for o in output])
+        print(arpa_string[:-5])
+        print(dataset.translate_arpabet(arpa_string[:-5]))
+        attentions = torch.cat(attentions, dim=0)
+        print(attentions[:-1, 1:-1])
 
 
 if __name__ == '__main__':
@@ -96,14 +105,13 @@ if __name__ == '__main__':
 
     model = Seq2Seq(dataset, device, args.encoder_size, args.character_size, args.type)
 
-    # if args.run:
-        # #TODO unhardcode and implement a joint encoder-decoder model class
-        # encoder.load_state_dict(torch.load('encoder3.model'))
-        # decoder.load_state_dict(torch.load('decoder3.model'))
-        # run(encoder, decoder, dataset)
-    # else:
-    try:
-        train(model, dataset, args.epochs, log_every=len(dataset.batches) // 10, save_name=args.save)
-    except KeyboardInterrupt:
-        print("Interruped")
+    if args.run:
+        #TODO unhardcode and implement a joint encoder-decoder model class
+        model.load_state_dict(torch.load('attn_01.model'))
+        run(model)
+    else:
+        try:
+            train(model, dataset, args.epochs, log_every=len(dataset.batches) // 10, save_name=args.save)
+        except KeyboardInterrupt:
+            print("Interruped")
 

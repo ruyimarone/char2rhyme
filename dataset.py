@@ -115,7 +115,7 @@ class Dataset:
         chars = []
         for char in word.split():
             chars.append(self.arpabet_to_ipa[char])
-        return ''.join(chars)
+        return ' '.join(chars)
 
 if __name__ == '__main__':
     d = Dataset('')

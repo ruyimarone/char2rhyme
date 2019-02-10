@@ -20,7 +20,7 @@ class Encoder(nn.Module):
         self.hidden_size = hidden_size // 2
         self.lstm = nn.LSTM(input_size=char_size,
                          hidden_size=hidden_size // 2,
-                         num_layers=2,
+                         num_layers=1,
                          batch_first = True,
                          bidirectional=True,
                          dropout=0.0)
@@ -88,14 +88,13 @@ class DecoderAttention(nn.Module):
     def decode(self, x, hidden, source_hiddens):
         x = self.out_embeddings(x)
         _, (hidden_state, cell_state) = self.decoder_lstm(x, hidden)
-        #apply attention TODO rewrite with eisum because this is disgusting
-        hidden = hidden_state.transpose(0, 1)
-        hidden = hidden.transpose(1, 2)
-        attention_scores = F.softmax(torch.bmm(source_hiddens, hidden).squeeze(2))
-        context_vectors = torch.bmm(attention_scores.unsqueeze(dim=1), source_hiddens)\
-                                .squeeze(dim=1).unsqueeze(dim=0)
+        # hidden_state: (1, batch_size, hidden)
+        # source_hiddens: (batch_size, seq_len, hidden)
+        scores = F.softmax(torch.einsum("dbh,bsh->bs", (hidden_state, source_hiddens)))
+        # scores: (batch_size, seq_len)
+        context_vectors = torch.einsum("bsh,bs->bh", (source_hiddens, scores)).unsqueeze(dim=0)
+        # context_vectors: (batch_size, hidden)
         return (hidden_state, cell_state), context_vectors
-
 
 class Seq2Seq(nn.Module):
     def __init__(self, dataset, device, hidden_size = 64, character_size = 64, decoder_type='base'):
@@ -104,6 +103,7 @@ class Seq2Seq(nn.Module):
         self.device = device
 
         self.encoder = Encoder(dataset, device, hidden_size, character_size)
+        self.decoder_type = decoder_type
         if decoder_type == 'base':
             self.decoder = Decoder(dataset, device, hidden_size)
         elif decoder_type == 'attn':
@@ -119,23 +119,38 @@ class Seq2Seq(nn.Module):
         return new_hidden, scores, x
 
 
-    def train_step(self, word, target, criterion, return_scores=False):
+    def train_step(self, word, target, criterion):
         source_hiddens, final_hidden = self.encoder(word)
         current_hidden = (final_hidden, final_hidden)
         x = target[:, 0:1]
         batch_loss = 0
-        sequence_scores = []
+
         for x_ix in range(len(target[0]) - 1):
             #decode a timestep
             current_hidden, scores, x = self._decoder_step(x, current_hidden, source_hiddens)
-
             x_target = target[:, x_ix+1]
             batch_loss += criterion(scores, x_target)
-            if return_scores:
-                sequence_scores.append(scores)
 
+        return batch_loss
 
-        if return_scores:
-            return batch_loss, sequence_scores
-        else:
-            return batch_loss
+    def free_run(self, word, return_attentions=False):
+        source_hiddens, final_hidden = self.encoder(word)
+        current_hidden = (final_hidden, final_hidden)
+        x = torch.tensor([[self.dataset.out_to_ix[SOS]]], device=self.device)
+        chars = []
+        out_char = None
+        EOS_ix = self.dataset.out_to_ix[EOS]
+        if self.decoder_type == 'attn':
+            attentions = []
+        while (out_char != EOS_ix) and len(chars) < 32:
+            #decode a timestep
+            current_hidden, scores, x = self._decoder_step(x, current_hidden, source_hiddens)
+            if self.decoder_type == 'attn':
+                attentions.append(self.decoder.attention_cache)
+            out_char = x[0][0].item()
+            chars.append(out_char)
+
+        if return_attentions and self.decoder_type == 'attn':
+            return chars, attentions
+        return chars
+
